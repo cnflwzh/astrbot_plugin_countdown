@@ -132,7 +132,7 @@
 python pack.py
 ```
 
-会生成 `dist/astrbot_plugin_countdown-v1.3.2.zip`。压缩包里带一层插件目录，可直接在 AstrBot WebUI「从文件安装」。
+会生成 `dist/astrbot_plugin_countdown-v1.3.3.zip`。压缩包里带一层插件目录，可直接在 AstrBot WebUI「从文件安装」。
 
 覆盖安装不会删除旧文件。如果加载报错 `cannot import name ...`，先在插件页卸载，再到容器里删掉 `data/plugins/astrbot_plugin_countdown` 后重新上传。
 

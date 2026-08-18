@@ -10,6 +10,12 @@ _PLUGIN_DIR = str(Path(__file__).resolve().parent)
 if _PLUGIN_DIR not in sys.path:
     sys.path.insert(0, _PLUGIN_DIR)
 
+# AstrBot reloads plugins in the same process. Drop cached submodules so a
+# newly extracted countdown/*.py is imported instead of the previous version.
+for _mod in list(sys.modules):
+    if _mod == "countdown" or _mod.startswith("countdown."):
+        del sys.modules[_mod]
+
 import astrbot.api.message_components as Comp
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
@@ -21,10 +27,20 @@ from countdown.logic import (
     find_task,
     name_exists,
     should_broadcast,
-    should_due_remind,
     should_pre_remind,
     tasks_for_broadcast,
 )
+
+try:
+    from countdown.logic import should_due_remind
+except ImportError:
+
+    def should_due_remind(task, now):
+        if not getattr(task, "enabled", True) or getattr(task, "mode", "") != "countdown":
+            return False
+        if not getattr(task, "has_time", False) or getattr(task, "due_reminded", False):
+            return False
+        return now >= task.target_datetime()
 from countdown.models import Task
 from countdown.parse import (
     ParseError,
@@ -102,7 +118,7 @@ def _data_dir() -> Path:
     "astrbot_plugin_countdown",
     "cnflwzh",
     "按群隔离的倒计时 / 正计时，支持模板占位符和每日定时播报",
-    "1.3.2",
+    "1.3.3",
 )
 class CountdownPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
