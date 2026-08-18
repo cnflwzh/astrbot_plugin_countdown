@@ -44,7 +44,9 @@
 
 添加 / 修改 / 删除仍走原来的管理员权限。可在配置里关掉 `enable_llm_tools`。
 
-Skill 装上后会出现在 WebUI 的 Skills 页（只读，由插件管理）。人格如果改成「不使用任何 Skills」或没勾选这个 Skill，模型可能不会按手册来调工具，但工具本身仍会注册。
+Skill 装上后会出现在 WebUI 的 Skills 页。插件启动时会把同一份 `SKILL.md` 同步到 `data/skills/countdown-manager/`，方便沙盒模式扫描。人格如果改成「不使用任何 Skills」，模型可能不会按手册来调，但 `countdown_*` 工具仍会注册。
+
+若日志里出现 `Skill sync phase=scan returned empty payload` 或去读 `/workspace/skills/countdown-manager/SKILL.md` 失败：那是沙盒工作区里没有这份文件，**不影响**直接调用 `countdown_add` 等工具。开一个新对话，让沙盒重新同步即可。
 
 ---
 
@@ -345,7 +347,7 @@ Skill 装上后会出现在 WebUI 的 Skills 页（只读，由插件管理）�
 python pack.py
 ```
 
-得到 `dist/astrbot_plugin_countdown-v1.4.0.zip`。请先卸载旧版再上传，不要直接覆盖。
+得到 `dist/astrbot_plugin_countdown-v1.4.1.zip`。请先卸载旧版再上传，不要直接覆盖。
 
 ```bash
 python pack.py --include-tests

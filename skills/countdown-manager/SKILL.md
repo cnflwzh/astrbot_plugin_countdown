@@ -1,11 +1,13 @@
 ---
 name: countdown-manager
-description: 管理当前群聊的倒计时和正计时。用户提到发售日、还有几天、加倒计时、改日期、删任务、查进度或正计时时使用。
+description: 管理当前群的倒计时和正计时。用户要加/改/删/查倒计时、发售日、还有几天时，直接调用 countdown_add、countdown_list、countdown_query、countdown_edit、countdown_delete。不要用 shell 或读文件去打开 SKILL.md。
 ---
 
 # 倒计时
 
-只操作**当前会话**里的任务，不要问其他群。日期用用户原话，不要编造。
+工具已经注册在当前对话里。直接调用，不要 `cat`、不要读 `/workspace/skills/`。
+
+只操作当前会话。日期用用户原话，不要编造。
 
 ## 工具
 

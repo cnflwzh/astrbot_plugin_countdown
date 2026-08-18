@@ -119,7 +119,7 @@ def _data_dir() -> Path:
     "astrbot_plugin_countdown",
     "cnflwzh",
     "按群隔离的倒计时 / 正计时，支持模板占位符和每日定时播报",
-    "1.4.0",
+    "1.4.1",
 )
 class CountdownPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
@@ -133,7 +133,27 @@ class CountdownPlugin(Star):
     async def initialize(self):
         self.store.load()
         self._ticker.start()
+        self._sync_skill_for_sandbox()
         logger.info("astrbot_plugin_countdown initialized (llm tools + skill)")
+
+    def _sync_skill_for_sandbox(self) -> None:
+        """Copy the bundled Skill into data/skills so Shipyard can sync it."""
+        src = Path(_PLUGIN_DIR) / "skills" / "countdown-manager" / "SKILL.md"
+        if not src.exists():
+            return
+        try:
+            from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+
+            dest_dir = Path(get_astrbot_data_path()) / "skills" / "countdown-manager"
+        except Exception:
+            dest_dir = Path("data") / "skills" / "countdown-manager"
+        try:
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest = dest_dir / "SKILL.md"
+            dest.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+            logger.info("synced countdown-manager skill to %s", dest)
+        except Exception:
+            logger.exception("failed to sync countdown-manager skill for sandbox")
 
     async def terminate(self):
         await self._ticker.stop()
