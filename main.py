@@ -52,6 +52,7 @@ from countdown.parse import (
     parse_datetime,
     parse_edit_args,
     resolve_timezone,
+    tokenize,
 )
 from countdown.perms import can_manage, can_query
 from countdown.render import (
@@ -118,7 +119,7 @@ def _data_dir() -> Path:
     "astrbot_plugin_countdown",
     "cnflwzh",
     "按群隔离的倒计时 / 正计时，支持模板占位符和每日定时播报",
-    "1.3.4",
+    "1.4.0",
 )
 class CountdownPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
@@ -132,7 +133,7 @@ class CountdownPlugin(Star):
     async def initialize(self):
         self.store.load()
         self._ticker.start()
-        logger.info("astrbot_plugin_countdown initialized")
+        logger.info("astrbot_plugin_countdown initialized (llm tools + skill)")
 
     async def terminate(self):
         await self._ticker.stop()
@@ -220,6 +221,38 @@ class CountdownPlugin(Star):
     def _render(self, tasks: list[Task], now: datetime) -> str:
         return self._payload(tasks, now)[1]
 
+    def _llm_tools_on(self) -> bool:
+        return bool(self._cfg("enable_llm_tools", True))
+
+    async def _send_user(self, event: AstrMessageEvent, result) -> None:
+        sender = getattr(event, "send", None)
+        if callable(sender):
+            await sender(result)
+
+    def _format_list(self, session, now: datetime) -> str:
+        if not session.tasks:
+            return "本群还没有倒计时或正计时任务。"
+        default_time = str(self._cfg("broadcast_time", "09:00") or "09:00")
+        status = "已开启" if session.broadcast_enabled else "已关闭"
+        lines = [
+            f"本群共 {len(session.tasks)} 个任务，每日 {clock_label(session, default_time)} 播报（{status}）",
+            "",
+        ]
+        for index, task in enumerate(session.tasks, start=1):
+            days = task_delta_days(task, now)
+            kind = "倒计时" if task.mode == "countdown" else "正计时"
+            paused = "（已停用）" if not task.enabled else ""
+            if task.mode == "countdown":
+                remain = str(task_context(task, now).get("remain") or "").strip()
+                extra = f"还有 {remain}" if remain else f"还有 {max(0, days)} 天"
+            else:
+                extra = f"已过 {max(0, days)} 天"
+            when = task.target_date().isoformat()
+            if task.has_time:
+                when = f"{when} {task.target_datetime().strftime('%H:%M')}"
+            lines.append(f"{index}. [{kind}] {task.name} → {when} {extra}{paused}")
+        return "\n".join(lines)
+
     def _render_card(self, key: str, now: datetime, items) -> Path | None:
         if not bool(self._cfg("send_image", True)):
             return None
@@ -290,6 +323,156 @@ class CountdownPlugin(Star):
     async def _cmd_help(self, event: AstrMessageEvent, _tokens: list[str]):
         yield self._reply(event, HELP_TEXT)
 
+    @filter.llm_tool(name="countdown_add")
+    async def countdown_add(
+        self,
+        event: AstrMessageEvent,
+        name: str,
+        date: str,
+        mode: str = "countdown",
+        template: str = "",
+    ):
+        """在当前群添加一条倒计时或正计时任务。
+
+        Args:
+            name(string): 任务名称，例如 《明日方舟：终末地》前瞻
+            date(string): 目标日期或日期时间，例如 2026-08-21 或 2026年8月21日19:30
+            mode(string): countdown 表示倒计时，countup 表示正计时，默认 countdown
+            template(string): 可选播报句式，可用 {name} {days} {remain} {target}
+        """
+        if not self._llm_tools_on():
+            return "倒计时工具已关闭。请在插件配置打开 enable_llm_tools。"
+        try:
+            if not can_manage(
+                event,
+                context=self.context,
+                mode=str(self._cfg("manage_permission", "astrbot_admin")),
+                plugin_admin_ids=self._cfg("plugin_admin_ids", []) or [],
+            ):
+                return "没有权限添加任务。需要 AstrBot 管理员或插件配置允许的管理员。"
+            kind = (mode or "countdown").strip().lower()
+            if kind in {"countup", "up", "正计时"}:
+                kind = "countup"
+            else:
+                kind = "countdown"
+            tokens = tokenize(" ".join(part for part in (name, date, template) if part).strip())
+            text = await self._add_task_text(event, tokens, mode=kind)
+            await self._send_user(event, self._reply(event, text))
+            return text
+        except ParseError as exc:
+            return str(exc)
+        except Exception:
+            logger.exception("countdown_add tool failed")
+            return "添加失败，请检查名称和日期。"
+
+    @filter.llm_tool(name="countdown_list")
+    async def countdown_list(self, event: AstrMessageEvent):
+        """列出当前群的全部倒计时和正计时，含序号、日期和剩余时间。"""
+        if not self._llm_tools_on():
+            return "倒计时工具已关闭。请在插件配置打开 enable_llm_tools。"
+        try:
+            if not can_query(
+                event,
+                context=self.context,
+                allow_all=bool(self._cfg("allow_query_all", True)),
+                mode=str(self._cfg("manage_permission", "astrbot_admin")),
+                plugin_admin_ids=self._cfg("plugin_admin_ids", []) or [],
+            ):
+                return "没有权限查看倒计时。"
+            text = self._format_list(self._require_session(event), self._now())
+            await self._send_user(event, self._reply(event, text))
+            return text
+        except ParseError as exc:
+            return str(exc)
+
+    @filter.llm_tool(name="countdown_query")
+    async def countdown_query(self, event: AstrMessageEvent):
+        """向当前群发送倒计时卡片，并返回文字摘要。"""
+        if not self._llm_tools_on():
+            return "倒计时工具已关闭。请在插件配置打开 enable_llm_tools。"
+        try:
+            if not can_query(
+                event,
+                context=self.context,
+                allow_all=bool(self._cfg("allow_query_all", True)),
+                mode=str(self._cfg("manage_permission", "astrbot_admin")),
+                plugin_admin_ids=self._cfg("plugin_admin_ids", []) or [],
+            ):
+                return "没有权限查询倒计时。"
+            session = self._require_session(event)
+            now = self._now()
+            tasks = [
+                task
+                for task in session.enabled_tasks()
+                if not (task.mode == "countdown" and task_delta_days(task, now) < 0)
+            ]
+            if not tasks:
+                return "本群当前没有可播报的任务。"
+            _header, text, items = self._payload(tasks, now, source_tasks=session.tasks)
+            image = self._render_card(session.key, now, items)
+            if image is not None:
+                await self._send_user(event, event.image_result(str(image)))
+            else:
+                await self._send_user(event, self._reply(event, text))
+            return text
+        except ParseError as exc:
+            return str(exc)
+
+    @filter.llm_tool(name="countdown_delete")
+    async def countdown_delete(self, event: AstrMessageEvent, target: str):
+        """删除当前群的一条倒计时或正计时。
+
+        Args:
+            target(string): 列表序号或任务名称，例如 1 或 《Dota3》
+        """
+        if not self._llm_tools_on():
+            return "倒计时工具已关闭。请在插件配置打开 enable_llm_tools。"
+        try:
+            if not can_manage(
+                event,
+                context=self.context,
+                mode=str(self._cfg("manage_permission", "astrbot_admin")),
+                plugin_admin_ids=self._cfg("plugin_admin_ids", []) or [],
+            ):
+                return "没有权限删除任务。"
+            session = self._require_session(event)
+            task = find_task(session, target.strip())
+            if task is None:
+                return "没有找到对应任务，请先 countdown_list 查看序号。"
+            name = task.name
+            self.store.remove_task(session, task)
+            text = f"已删除任务「{name}」。"
+            await self._send_user(event, self._reply(event, text))
+            return text
+        except ParseError as exc:
+            return str(exc)
+
+    @filter.llm_tool(name="countdown_edit")
+    async def countdown_edit(self, event: AstrMessageEvent, target: str, field: str, value: str):
+        """修改当前群已有任务的名称、日期、模板或开关。
+
+        Args:
+            target(string): 列表序号或任务名称
+            field(string): name、date、template 或 enabled
+            value(string): 新值。date 用 2026-08-21 或 2026年8月21日19:30；enabled 用 开 或 关
+        """
+        if not self._llm_tools_on():
+            return "倒计时工具已关闭。请在插件配置打开 enable_llm_tools。"
+        try:
+            if not can_manage(
+                event,
+                context=self.context,
+                mode=str(self._cfg("manage_permission", "astrbot_admin")),
+                plugin_admin_ids=self._cfg("plugin_admin_ids", []) or [],
+            ):
+                return "没有权限修改任务。"
+            tokens = tokenize(f"{target} {field} {value}".strip())
+            text = self._edit_task_text(event, tokens)
+            await self._send_user(event, self._reply(event, text))
+            return text
+        except ParseError as exc:
+            return str(exc)
+
     async def _cmd_add(self, event: AstrMessageEvent, tokens: list[str]):
         self._assert_manage(event)
         async for result in self._add_task(event, tokens, mode="countdown"):
@@ -301,6 +484,9 @@ class CountdownPlugin(Star):
             yield result
 
     async def _add_task(self, event: AstrMessageEvent, tokens: list[str], *, mode: str):
+        yield self._reply(event, await self._add_task_text(event, tokens, mode=mode))
+
+    async def _add_task_text(self, event: AstrMessageEvent, tokens: list[str], *, mode: str) -> str:
         session = self._require_session(event)
         now = self._now()
         name, parsed_date, template = parse_add_args(
@@ -345,35 +531,12 @@ class CountdownPlugin(Star):
                 f"\n将在 {parsed_date.value.strftime('%H:%M')} 前 {minutes} 分钟提醒一次，"
                 "到点再提醒一次。"
             )
-        yield self._reply(event, f"已添加{kind}任务：\n{preview}{extra}")
+        return f"已添加{kind}任务：\n{preview}{extra}"
 
     async def _cmd_list(self, event: AstrMessageEvent, _tokens: list[str]):
         self._assert_query(event)
         session = self._require_session(event)
-        now = self._now()
-        if not session.tasks:
-            yield self._reply(event, "本群还没有倒计时或正计时任务。")
-            return
-        default_time = str(self._cfg("broadcast_time", "09:00") or "09:00")
-        status = "已开启" if session.broadcast_enabled else "已关闭"
-        lines = [
-            f"本群共 {len(session.tasks)} 个任务，每日 {clock_label(session, default_time)} 播报（{status}）",
-            "",
-        ]
-        for index, task in enumerate(session.tasks, start=1):
-            days = task_delta_days(task, now)
-            kind = "倒计时" if task.mode == "countdown" else "正计时"
-            paused = "（已停用）" if not task.enabled else ""
-            if task.mode == "countdown":
-                remain = str(task_context(task, now).get("remain") or "").strip()
-                extra = f"还有 {remain}" if remain else f"还有 {max(0, days)} 天"
-            else:
-                extra = f"已过 {max(0, days)} 天"
-            when = task.target_date().isoformat()
-            if task.has_time:
-                when = f"{when} {task.target_datetime().strftime('%H:%M')}"
-            lines.append(f"{index}. [{kind}] {task.name} → {when} {extra}{paused}")
-        yield self._reply(event, "\n".join(lines))
+        yield self._reply(event, self._format_list(session, self._now()))
 
     async def _cmd_delete(self, event: AstrMessageEvent, tokens: list[str]):
         self._assert_manage(event)
@@ -388,6 +551,9 @@ class CountdownPlugin(Star):
 
     async def _cmd_edit(self, event: AstrMessageEvent, tokens: list[str]):
         self._assert_manage(event)
+        yield self._reply(event, self._edit_task_text(event, tokens))
+
+    def _edit_task_text(self, event: AstrMessageEvent, tokens: list[str]) -> str:
         target, field, value = parse_edit_args(tokens)
         session = self._require_session(event)
         task = find_task(session, target)
@@ -435,7 +601,7 @@ class CountdownPlugin(Star):
             task.due_reminded = False
 
         self.store.mutate(apply)
-        yield self._reply(event, f"已更新任务「{task.name}」。\n{self._render([task], now)}")
+        return f"已更新任务「{task.name}」。\n{self._render([task], now)}"
 
     async def _cmd_query(self, event: AstrMessageEvent, _tokens: list[str]):
         self._assert_query(event)

@@ -59,6 +59,12 @@
     "hint": "带时刻的倒计时到目标时刻时单独发送。可用 {name} {target_time}",
     "default": "{name}到时间了！"
   },
+  "enable_llm_tools": {
+    "description": "允许对话里的大模型调用倒计时工具",
+    "type": "bool",
+    "hint": "打开后，用户可以说「帮我加一个倒计时」由模型调用添加/修改/删除/查询。管理类操作仍受管理员权限限制",
+    "default": true
+  },
   "send_image": {
     "description": "每日播报和查询发送图片卡片",
     "type": "bool",

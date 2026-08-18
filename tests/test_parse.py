@@ -111,6 +111,15 @@ def test_parse_add_name_then_glued_datetime():
 USER_ADD = "/倒计时 添加 《明日方舟：终末地》前瞻 2026年8月21日19:30"
 
 
+def test_llm_tool_style_name_and_date_tokens():
+    today = date(2026, 8, 18)
+    tokens = tokenize("《明日方舟：终末地》前瞻 2026年8月21日19:30")
+    name, when, template = parse_add_args(tokens, today, future_md=True)
+    assert name == "《明日方舟：终末地》前瞻"
+    assert when.value == datetime(2026, 8, 21, 19, 30)
+    assert template == ""
+
+
 def test_user_command_tokenize_splits_book_title_and_suffix():
     """《...》会被单独切出，后面的「前瞻」是下一个词，日期时刻粘在一起是第三个词。"""
     full = tokenize(USER_ADD.lstrip("/"))

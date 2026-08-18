@@ -30,6 +30,24 @@
 
 ---
 
+## 和 AstrBot 对话时调用
+
+插件会注册 5 个 LLM 工具，并附带 Skill `countdown-manager`。普通聊天里说「帮我加一个终末地前瞻倒计时，8 月 21 日 19:30」，模型应自动调用工具，而不必打斜杠指令。
+
+| 工具 | 作用 |
+| --- | --- |
+| `countdown_add` | 添加倒计时或正计时 |
+| `countdown_list` | 列出本群任务和序号 |
+| `countdown_query` | 发查询卡片，并给模型一份文字摘要 |
+| `countdown_edit` | 改名称、日期、模板、开关 |
+| `countdown_delete` | 按序号或名称删除 |
+
+添加 / 修改 / 删除仍走原来的管理员权限。可在配置里关掉 `enable_llm_tools`。
+
+Skill 装上后会出现在 WebUI 的 Skills 页（只读，由插件管理）。人格如果改成「不使用任何 Skills」或没勾选这个 Skill，模型可能不会按手册来调工具，但工具本身仍会注册。
+
+---
+
 ## `/倒计时 添加`
 
 添加一条倒计时。日期写在名称后面，插件会自己认出日期，书名号后面的说明也会算进名称。
@@ -327,7 +345,7 @@
 python pack.py
 ```
 
-得到 `dist/astrbot_plugin_countdown-v1.3.4.zip`。请先卸载旧版再上传，不要直接覆盖。
+得到 `dist/astrbot_plugin_countdown-v1.4.0.zip`。请先卸载旧版再上传，不要直接覆盖。
 
 ```bash
 python pack.py --include-tests
