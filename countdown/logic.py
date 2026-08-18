@@ -52,7 +52,9 @@ def due_for_cleanup(task: Task, now: datetime, *, include_date_only_zero: bool) 
     if days > 0:
         return False
     if task.has_time:
-        return now >= task.target_datetime()
+        if now < task.target_datetime():
+            return False
+        return task.due_reminded
     return include_date_only_zero
 
 
@@ -80,6 +82,14 @@ def should_pre_remind(task: Task, now: datetime, *, minutes: int) -> bool:
     target = task.target_datetime()
     remind_at = target - timedelta(minutes=minutes)
     return remind_at <= now < target
+
+
+def should_due_remind(task: Task, now: datetime) -> bool:
+    if not task.enabled or task.mode != "countdown" or not task.has_time:
+        return False
+    if task.due_reminded:
+        return False
+    return now >= task.target_datetime()
 
 
 def find_task(session: SessionState, token: str) -> Task | None:

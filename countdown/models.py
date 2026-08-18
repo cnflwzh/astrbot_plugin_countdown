@@ -24,6 +24,7 @@ class Task:
     enabled: bool = True
     has_time: bool = False
     pre_reminded: bool = False
+    due_reminded: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

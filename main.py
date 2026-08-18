@@ -21,6 +21,7 @@ from countdown.logic import (
     find_task,
     name_exists,
     should_broadcast,
+    should_due_remind,
     should_pre_remind,
     tasks_for_broadcast,
 )
@@ -80,7 +81,7 @@ HELP_TEXT = """【倒计时】每个群的任务互相隔离
 
 标题占位符：{year} {month} {day} {weekday} {today} {today_iso}
 条目占位符：{name} {days} {hours} {minutes} {remain} {target} {target_time} {mode}
-仅写日期的任务到期当天改成「{name}就在今天！」。带时刻的任务会按剩余时间播报，并在正点前 10 分钟再单独提醒。"""
+仅写日期的任务到期当天改成「{name}就在今天！」。带时刻的任务会按剩余时间播报，正点前 10 分钟提醒一次，到点再提醒一次。"""
 
 
 def _data_dir() -> Path:
@@ -101,7 +102,7 @@ def _data_dir() -> Path:
     "astrbot_plugin_countdown",
     "cnflwzh",
     "按群隔离的倒计时 / 正计时，支持模板占位符和每日定时播报",
-    "1.3.1",
+    "1.3.2",
 )
 class CountdownPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
@@ -321,7 +322,10 @@ class CountdownPlugin(Star):
         extra = ""
         if mode == "countdown" and parsed_date.has_time:
             minutes = int(self._cfg("pre_remind_minutes", 10) or 10)
-            extra = f"\n将在 {parsed_date.value.strftime('%H:%M')} 前 {minutes} 分钟单独提醒。"
+            extra = (
+                f"\n将在 {parsed_date.value.strftime('%H:%M')} 前 {minutes} 分钟提醒一次，"
+                "到点再提醒一次。"
+            )
         yield self._reply(event, f"已添加{kind}任务：\n{preview}{extra}")
 
     async def _cmd_list(self, event: AstrMessageEvent, _tokens: list[str]):
@@ -409,6 +413,7 @@ class CountdownPlugin(Star):
             task.target = parsed_date.iso
             task.has_time = parsed_date.has_time
             task.pre_reminded = False
+            task.due_reminded = False
 
         self.store.mutate(apply)
         yield self._reply(event, f"已更新任务「{task.name}」。\n{self._render([task], now)}")
@@ -505,9 +510,11 @@ class CountdownPlugin(Star):
             catch_up = int(self._cfg("catch_up_minutes", 10) or 0)
             cleanup = bool(self._cfg("cleanup_after_zero", True))
             async with self._broadcast_lock:
-                self._cleanup_overdue(now, cleanup)
                 for session in self.store.iter_sessions():
                     await self._send_pre_reminds(session, now)
+                    await self._send_due_reminds(session, now)
+                self._cleanup_overdue(now, cleanup)
+                for session in self.store.iter_sessions():
                     if not should_broadcast(
                         session,
                         now,
@@ -561,6 +568,34 @@ class CountdownPlugin(Star):
             for task in session.tasks:
                 if task.id in sent_ids:
                     task.pre_reminded = True
+
+        self.store.mutate(mark)
+
+    async def _send_due_reminds(self, session, now: datetime) -> None:
+        template = str(self._cfg("due_remind_template", "{name}到时间了！") or "")
+        pending = [task for task in session.tasks if should_due_remind(task, now)]
+        if not pending:
+            return
+        sent_ids: list[str] = []
+        for task in pending:
+            ctx = task_context(task, now)
+            text = render_template(template, ctx)
+            try:
+                result = await self.context.send_message(session.umo, self._build_chain(text))
+            except Exception:
+                logger.exception("failed to send due remind for %s", task.name)
+                continue
+            if result is False:
+                logger.warning("due-remind send_message returned False for %s", session.umo)
+                continue
+            sent_ids.append(task.id)
+        if not sent_ids:
+            return
+
+        def mark():
+            for task in session.tasks:
+                if task.id in sent_ids:
+                    task.due_reminded = True
 
         self.store.mutate(mark)
 

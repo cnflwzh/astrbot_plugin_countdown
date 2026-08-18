@@ -4,6 +4,7 @@ from countdown.logic import (
     expired_countdowns,
     find_task,
     should_broadcast,
+    should_due_remind,
     should_pre_remind,
     tasks_for_broadcast,
 )
@@ -107,7 +108,13 @@ def test_timed_task_not_cleaned_before_clock():
     after_release = expired_countdowns(
         session, datetime(2060, 1, 1, 18, 0, 0), cleanup_after_zero=True, include_zero=False
     )
-    assert [task.name for task in after_release] == ["Dota3"]
+    assert after_release == []
+
+    timed.due_reminded = True
+    after_due_remind = expired_countdowns(
+        session, datetime(2060, 1, 1, 18, 0, 0), cleanup_after_zero=True, include_zero=False
+    )
+    assert [task.name for task in after_due_remind] == ["Dota3"]
 
 
 def test_pre_remind_window():
@@ -119,3 +126,12 @@ def test_pre_remind_window():
 
     task.pre_reminded = True
     assert should_pre_remind(task, datetime(2060, 1, 1, 17, 50, 0), minutes=10) is False
+
+
+def test_due_remind_at_target_time():
+    task = _task("1", "Dota3", "countdown", "2060-01-01T18:00:00", has_time=True)
+    assert should_due_remind(task, datetime(2060, 1, 1, 17, 59, 0)) is False
+    assert should_due_remind(task, datetime(2060, 1, 1, 18, 0, 0)) is True
+    assert should_due_remind(task, datetime(2060, 1, 1, 18, 5, 0)) is True
+    task.due_reminded = True
+    assert should_due_remind(task, datetime(2060, 1, 1, 18, 5, 0)) is False

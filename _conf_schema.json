@@ -53,6 +53,12 @@
     "hint": "可用 {name} {minutes} {target_time}",
     "default": "{name}还有{minutes}分钟！"
   },
+  "due_remind_template": {
+    "description": "到点提醒模板",
+    "type": "text",
+    "hint": "带时刻的倒计时到目标时刻时单独发送。可用 {name} {target_time}",
+    "default": "{name}到时间了！"
+  },
   "send_image": {
     "description": "每日播报和查询发送图片卡片",
     "type": "bool",
@@ -93,7 +99,7 @@
   "cleanup_after_zero": {
     "description": "倒计时到 0 天播报后自动删除",
     "type": "bool",
-    "hint": "仅日期的任务在当天播报后删除；带时刻的任务等到该时刻过后再删，方便发送正点前提醒。正计时不会自动删除",
+    "hint": "仅日期的任务在当天播报后删除；带时刻的任务会先发到点提醒，成功后再删。正计时不会自动删除",
     "default": true
   },
   "catch_up_minutes": {
