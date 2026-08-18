@@ -1,0 +1,116 @@
+{
+  "timezone": {
+    "description": "时区",
+    "type": "string",
+    "hint": "用于计算日期和每日播报，例如 Asia/Shanghai",
+    "default": "Asia/Shanghai"
+  },
+  "broadcast_time": {
+    "description": "默认定时播报时间",
+    "type": "string",
+    "hint": "24 小时制 HH:MM。各群可用 /倒计时 时间 21:30 单独覆盖",
+    "default": "09:00"
+  },
+  "header_template": {
+    "description": "播报标题模板",
+    "type": "text",
+    "hint": "可用占位符：{year} {month} {day} {weekday} {weekday_short} {today} {today_iso} {hour} {minute}",
+    "default": "今天是{year}年{month}月{day}日。"
+  },
+  "countdown_item_template": {
+    "description": "倒计时条目默认模板（仅日期）",
+    "type": "text",
+    "hint": "没写时刻的倒计时用这个。占位符：{name} {days} {remain} {target} {mode}",
+    "default": "距离{name}还有{days}天"
+  },
+  "countdown_time_template": {
+    "description": "带时刻的倒计时默认模板",
+    "type": "text",
+    "hint": "填写了 19:30 这类时刻时用这个。占位符：{name} {remain} {days} {hours} {minutes} {target} {target_time}",
+    "default": "距离{name}还有{remain}"
+  },
+  "countup_item_template": {
+    "description": "正计时条目默认模板",
+    "type": "text",
+    "hint": "当添加正计时未写模板则使用此项。占位符同上",
+    "default": "{name}已经过去{days}天"
+  },
+  "today_item_template": {
+    "description": "到期当天条目模板",
+    "type": "text",
+    "hint": "仅日期的任务到当天、或带时刻的任务过了目标时刻后使用",
+    "default": "{name}就在今天！"
+  },
+  "pre_remind_minutes": {
+    "description": "带具体时刻的任务提前提醒（分钟）",
+    "type": "int",
+    "hint": "仅对填写了时刻的倒计时生效，到点前单独发一条文字提醒",
+    "default": 10
+  },
+  "pre_remind_template": {
+    "description": "正点前提醒模板",
+    "type": "text",
+    "hint": "可用 {name} {minutes} {target_time}",
+    "default": "{name}还有{minutes}分钟！"
+  },
+  "send_image": {
+    "description": "每日播报和查询发送图片卡片",
+    "type": "bool",
+    "hint": "关闭后只发文字。生成失败时会自动回退为文字",
+    "default": true
+  },
+  "item_prefix": {
+    "description": "每条任务前缀",
+    "type": "string",
+    "hint": "会加在每一条任务模板前面，默认是 Markdown 风格的 - ",
+    "default": "- "
+  },
+  "manage_permission": {
+    "description": "谁可以添加 / 删除 / 修改任务",
+    "type": "string",
+    "hint": "astrbot_admin=仅仪表盘管理员；plugin_admin=下方额外管理员（仪表盘管理员始终可操作）；group_admin=QQ 群主/管理员；all=所有人",
+    "options": ["astrbot_admin", "plugin_admin", "group_admin", "all"],
+    "default": "astrbot_admin"
+  },
+  "plugin_admin_ids": {
+    "description": "插件额外管理员 QQ 号",
+    "type": "list",
+    "hint": "当权限模式为 plugin_admin 时生效。请填写用户 ID，可在群里发送 /sid 查看 UID。仪表盘管理员始终拥有管理权限。",
+    "default": []
+  },
+  "allow_query_all": {
+    "description": "允许所有人查询 / 列出任务",
+    "type": "bool",
+    "hint": "关闭后，列表和手动查询也需要管理员权限",
+    "default": true
+  },
+  "allow_private": {
+    "description": "允许私聊使用",
+    "type": "bool",
+    "hint": "开启后，私聊会作为独立会话保存任务，与群聊隔离",
+    "default": true
+  },
+  "cleanup_after_zero": {
+    "description": "倒计时到 0 天播报后自动删除",
+    "type": "bool",
+    "hint": "仅日期的任务在当天播报后删除；带时刻的任务等到该时刻过后再删，方便发送正点前提醒。正计时不会自动删除",
+    "default": true
+  },
+  "catch_up_minutes": {
+    "description": "错过播报后的补发窗口（分钟）",
+    "type": "int",
+    "hint": "机器人在播报时间之后不久才启动时，仍会补发当天的播报",
+    "default": 10
+  },
+  "max_tasks_per_group": {
+    "description": "每个群最多任务数",
+    "type": "int",
+    "default": 30
+  },
+  "at_all_on_zero": {
+    "description": "倒计时到 0 天时 @全体成员",
+    "type": "bool",
+    "hint": "需要机器人具备群管理权限，且可能触发平台风控，默认关闭",
+    "default": false
+  }
+}

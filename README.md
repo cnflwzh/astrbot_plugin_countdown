@@ -1,14 +1,149 @@
-# astrbot-plugin-helloworld
+# astrbot_plugin_countdown
 
-AstrBot 插件模板 / A template plugin for AstrBot plugin feature
+按群隔离的倒计时 / 正计时插件。适合游戏发售、活动前瞻、开服纪念日这类「每天报一次还剩多久 / 已经过了多久」的场景。
 
-> [!NOTE]
-> This repo is just a template of [AstrBot](https://github.com/AstrBotDevs/AstrBot) Plugin.
-> 
-> [AstrBot](https://github.com/AstrBotDevs/AstrBot) is an agentic assistant for both personal and group conversations. It can be deployed across dozens of mainstream instant messaging platforms, including QQ, Telegram, Feishu, DingTalk, Slack, LINE, Discord, Matrix, etc. In addition, it provides a reliable and extensible conversational AI infrastructure for individuals, developers, and teams. Whether you need a personal AI companion, an intelligent customer support agent, an automation assistant, or an enterprise knowledge base, AstrBot enables you to quickly build AI applications directly within your existing messaging workflows.
+当前版本仅兼容 **aiocqhttp（OneBot v11）**。
 
-# Supports
+## 效果
 
-- [AstrBot Repo](https://github.com/AstrBotDevs/AstrBot)
-- [AstrBot Plugin Development Docs (Chinese)](https://docs.astrbot.app/dev/star/plugin-new.html)
-- [AstrBot Plugin Development Docs (English)](https://docs.astrbot.app/en/dev/star/plugin-new.html)
+每天（默认 09:00）在对应群里发一张图片卡片，内容等价于：
+
+```text
+今天是2060年1月1日。
+- 距离《Dota3》发售还有30天
+- 《明日方舟：终末地》前瞻就在今天！
+```
+
+每条任务的日常句式都是模板。只写日期的任务到期当天会改成 `{name}就在今天！`。写了具体时刻的任务会按剩余时间显示，例如「还有 10小时30分钟」，并在正点前 10 分钟再单独提醒一次。
+
+## 指令
+
+唤醒前缀以你的 AstrBot 配置为准，下面以默认 `/` 为例。别名：`/cd`、`/countdown`。
+
+| 指令 | 说明 | 默认权限 |
+| --- | --- | --- |
+| `/倒计时 添加 <名称> <日期> [模板]` | 添加倒计时 | 管理员 |
+| `/倒计时 正计时 <名称> <日期> [模板]` | 添加正计时 | 管理员 |
+| `/倒计时 列表` | 查看本群任务 | 所有人 |
+| `/倒计时 查询` | 立刻按当前模板播报一次 | 所有人 |
+| `/倒计时 删除 <序号或名称>` | 删除任务 | 管理员 |
+| `/倒计时 改 <序号或名称> 名称\|日期\|模板\|开关 <值>` | 修改任务 | 管理员 |
+| `/倒计时 时间 [HH:MM\|默认]` | 查看或设置本群播报时间 | 查看所有人，修改管理员 |
+| `/倒计时 开启` / `/倒计时 关闭` | 开关本群每日播报 | 管理员 |
+| `/倒计时 开关 <序号或名称>` | 停用 / 启用单条任务 | 管理员 |
+| `/倒计时 帮助` | 查看用法 | 所有人 |
+
+群与群之间的任务完全隔离。私聊可作为独立会话使用（可在配置里关闭）。
+
+### 示例
+
+```text
+/倒计时 添加 《Dota3》 2060-01-31 距离《{name}》发售还有{days}天
+/倒计时 添加 《明日方舟：终末地》前瞻 2026年8月21日19:30
+/倒计时 添加 "明日方舟：终末地" 2026-08-20 18:00
+/倒计时 正计时 开服 2024-06-01 {name}已经过去{days}天
+/倒计时 改 1 模板 距离{name}发售还有{remain}
+/倒计时 时间 09:00
+```
+
+日期支持 `2026-12-31`、`2026/12/31`、`2026年12月31日`、`12月31日`。时刻可以跟在后面，中间有没有空格都行：`2026-12-31 18:00`、`2026年8月21日19:30`。书名号后面的说明会算进名称。
+
+只有月日时：倒计时会落到今天或下一个未到的日期，正计时会落到今天或上一个已过的日期。
+
+## 占位符
+
+### 标题模板（仪表盘里配置）
+
+| 占位符 | 含义 | 示例 |
+| --- | --- | --- |
+| `{today}` | 今天（中文） | 2060年1月1日 |
+| `{today_iso}` | 今天（ISO） | 2060-01-01 |
+| `{year}` `{month}` `{day}` | 年 / 月 / 日（不补零） | 2060 / 1 / 1 |
+| `{month_02}` `{day_02}` | 补零月 / 日 | 01 / 01 |
+| `{weekday}` `{weekday_short}` | 星期 | 星期一 / 周一 |
+| `{hour}` `{minute}` | 当前时 / 分 | 9 / 0 |
+
+### 条目模板（添加任务时写，或走默认模板）
+
+| 占位符 | 含义 |
+| --- | --- |
+| `{name}` | 任务名称 |
+| `{days}` | 剩余整天数 |
+| `{hours}` `{minutes}` | 去掉整天后的小时 / 分钟 |
+| `{remain}` | 拼好的剩余时间，如 `2天3小时`、`10小时30分钟` |
+| `{target}` | 目标日期；带时刻时含时间 |
+| `{target_time}` | 目标时刻，如 `19:30` |
+| `{mode}` | `倒计时` 或 `正计时` |
+
+未知占位符会原样保留，不会报错。
+
+## 权限
+
+默认只有 **AstrBot 仪表盘管理员** 可以添加、删除、修改任务。
+
+1. 在群里发送 `/sid`，记下 `UID`
+2. 打开 WebUI：`配置 -> 其他配置 -> 管理员 ID`
+3. 把 UID 加进去
+
+也可以在本插件配置里把 `manage_permission` 改成：
+
+- `astrbot_admin`：仅仪表盘管理员（默认）
+- `plugin_admin`：插件配置里的 `plugin_admin_ids`，仪表盘管理员始终可操作
+- `group_admin`：该 QQ 群的群主 / 管理员
+- `all`：所有人
+
+`allow_query_all` 默认开启，普通成员可以 `/倒计时 列表` 和 `/倒计时 查询`。
+
+## 到期当天与正点前提醒
+
+- 倒计时到 0 天时，不再用日常模板，而是 `{name}就在今天！`
+- 只写日期的任务：当天例行播报后删除
+- 写了时刻的任务：当天例行播报仍会留下，等到该时刻过后再删
+- 写了时刻的任务会在正点前 10 分钟再发一条文字：`{name}还有10分钟！`
+- 正计时不会自动删除
+
+可在仪表盘改到期模板、提前提醒分钟数，或关闭图片卡片。
+
+## 配置
+
+安装后到 WebUI 插件页打开本插件的配置：
+
+- 时区、默认定时播报时间
+- 标题模板、倒计时 / 正计时默认条目模板、到期当天模板
+- 是否发送图片卡片、正点前提醒时间和模板
+- 权限模式、额外管理员
+- 到期清理、补发窗口、每群任务上限
+- 到期当天是否 `@全体成员`（默认关）
+
+任务数据保存在 `data/plugin_data/astrbot_plugin_countdown/data.json`，更新插件不会丢数据。
+
+## 安装
+
+1. 在 AstrBot 插件市场搜索安装，或把本仓库放到 `data/plugins/astrbot_plugin_countdown`
+2. 重启或在插件页重载
+3. 在仪表盘填写管理员，并按需改默认模板和播报时间
+
+## 打包
+
+在仓库根目录执行：
+
+```bash
+python pack.py
+```
+
+会生成 `dist/astrbot_plugin_countdown-v1.3.1.zip`。压缩包里带一层插件目录，可直接在 AstrBot WebUI「从文件安装」。
+
+覆盖安装不会删除旧文件。如果加载报错 `cannot import name ...`，先在插件页卸载，再到容器里删掉 `data/plugins/astrbot_plugin_countdown` 后重新上传。
+
+```bash
+python pack.py --include-tests
+python pack.py -o D:\tmp\countdown.zip
+```
+
+## 开发
+
+```bash
+python -m pytest tests
+```
+
+核心日期解析、模板渲染、到期清理和存储不依赖运行中的 AstrBot，可直接单测。
