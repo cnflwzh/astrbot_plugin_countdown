@@ -2,6 +2,7 @@ from datetime import datetime
 
 from countdown.models import Task
 from countdown.render import (
+    build_render_items,
     header_context,
     render_broadcast,
     render_template,
@@ -104,3 +105,24 @@ def test_timed_countdown_uses_remain_before_due():
         item_prefix="",
     )
     assert after == "《明日方舟：终末地》前瞻就在今天！"
+
+
+def test_render_items_keep_source_index():
+    now = datetime(2060, 1, 1, 9, 0, 0)
+    first = _task("Dota3", "countdown", "2060-01-31")
+    first.id = "1"
+    second = _task("前瞻", "countdown", "2060-01-01")
+    second.id = "2"
+    _header, _text, items = build_render_items(
+        [first, second],
+        now,
+        header_template="",
+        countdown_template="距离{name}还有{days}天",
+        countup_template="{name}已经过去{days}天",
+        today_template="{name}就在今天！",
+        source_tasks=[first, second],
+    )
+    by_name = {item.name: item.index for item in items}
+    assert by_name["前瞻"] == 2
+    assert by_name["Dota3"] == 1
+    assert items[0].name == "前瞻"

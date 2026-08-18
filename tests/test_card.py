@@ -19,6 +19,7 @@ def test_render_card_writes_png(tmp_path: Path):
                 is_today=True,
                 has_time=False,
                 target_time="",
+                index=2,
             ),
             RenderedItem(
                 name="Dota3",
@@ -28,6 +29,8 @@ def test_render_card_writes_png(tmp_path: Path):
                 is_today=False,
                 has_time=True,
                 target_time="18:00",
+                remain="30天",
+                index=1,
             ),
         ],
     )

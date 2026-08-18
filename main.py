@@ -118,7 +118,7 @@ def _data_dir() -> Path:
     "astrbot_plugin_countdown",
     "cnflwzh",
     "按群隔离的倒计时 / 正计时，支持模板占位符和每日定时播报",
-    "1.3.3",
+    "1.3.4",
 )
 class CountdownPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
@@ -205,13 +205,16 @@ class CountdownPlugin(Star):
             return
         raise ParseError("只有管理员可以查询倒计时。")
 
-    def _payload(self, tasks: list[Task], now: datetime):
+    def _payload(self, tasks: list[Task], now: datetime, source_tasks: list[Task] | None = None):
         kwargs = self._templates()
+        if source_tasks is not None:
+            kwargs["source_tasks"] = source_tasks
         try:
             accepted = set(inspect.signature(build_render_items).parameters)
             kwargs = {key: value for key, value in kwargs.items() if key in accepted}
         except (TypeError, ValueError):
             kwargs.pop("countdown_time_template", None)
+            kwargs.pop("source_tasks", None)
         return build_render_items(tasks, now, **kwargs)
 
     def _render(self, tasks: list[Task], now: datetime) -> str:
@@ -446,7 +449,7 @@ class CountdownPlugin(Star):
         if not tasks:
             yield self._reply(event, "本群当前没有可播报的任务。")
             return
-        _header, text, items = self._payload(tasks, now)
+        _header, text, items = self._payload(tasks, now, source_tasks=session.tasks)
         image = self._render_card(session.key, now, items)
         if image is not None:
             yield event.image_result(str(image))
@@ -619,7 +622,7 @@ class CountdownPlugin(Star):
         tasks = tasks_for_broadcast(session, now)
         if not tasks:
             return
-        _header, text, items = self._payload(tasks, now)
+        _header, text, items = self._payload(tasks, now, source_tasks=session.tasks)
         image = self._render_card(session.key, now, items)
         at_all = bool(self._cfg("at_all_on_zero", False)) and any(
             task.mode == "countdown" and task_delta_days(task, now) <= 0 for task in tasks

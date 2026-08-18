@@ -4,11 +4,14 @@ from pathlib import Path
 
 from .render import RenderedItem
 
-WIDTH = 840
-PADDING = 40
-HEADER_H = 132
-ITEM_GAP = 14
-ITEM_PAD = 22
+WIDTH = 920
+PADDING = 36
+HEADER_H = 148
+ITEM_GAP = 16
+ITEM_PAD_X = 20
+ITEM_PAD_Y = 20
+INDEX_SIZE = 44
+REMAIN_W = 168
 
 
 def _font_candidates() -> list[str]:
@@ -63,90 +66,128 @@ def _wrap(font, text: str, max_width: int) -> list[str]:
     return lines or [""]
 
 
+def _center_text(draw, center: tuple[float, float], text: str, font, fill) -> None:
+    box = draw.textbbox((0, 0), text, font=font)
+    tw, th = box[2] - box[0], box[3] - box[1]
+    draw.text(
+        (center[0] - tw / 2 - box[0], center[1] - th / 2 - box[1]),
+        text,
+        font=font,
+        fill=fill,
+    )
+
+
+def _remain_display(item: RenderedItem) -> tuple[str, str]:
+    if item.is_due or (item.is_today and not item.has_time):
+        return "今天", ""
+    if item.remain:
+        if item.remain.endswith("天") and item.remain[:-1].isdigit():
+            return item.remain[:-1], "天"
+        return item.remain, "剩余" if item.mode == "countdown" else "已过"
+    if item.mode == "countdown":
+        return str(max(item.days, 0)), "天"
+    return f"+{max(item.days, 0)}", "天"
+
+
 def render_card(path: Path, *, header: str, weekday: str, items: list[RenderedItem]) -> Path:
     from PIL import Image, ImageDraw
 
-    title_font = _load_font(22)
-    date_font = _load_font(36)
-    week_font = _load_font(20)
-    days_font = _load_font(40)
+    title_font = _load_font(18)
+    date_font = _load_font(38)
+    week_font = _load_font(18)
+    index_font = _load_font(20)
     name_font = _load_font(26)
-    text_font = _load_font(20)
-    badge_font = _load_font(16)
+    text_font = _load_font(18)
+    meta_font = _load_font(16)
+    remain_font = _load_font(28)
+    remain_unit_font = _load_font(14)
 
-    inner_w = WIDTH - PADDING * 2
-    item_inner_w = inner_w - ITEM_PAD * 2 - 108
+    text_max = WIDTH - PADDING * 2 - ITEM_PAD_X * 2 - INDEX_SIZE - 20 - REMAIN_W
     heights: list[int] = []
     wrapped: list[tuple[list[str], list[str]]] = []
     for item in items:
-        name_lines = _wrap(name_font, item.name, item_inner_w)
-        body_lines = _wrap(text_font, item.text, item_inner_w)
-        height = ITEM_PAD * 2 + len(name_lines) * 34 + len(body_lines) * 28 + 8
-        heights.append(max(height, 96))
+        name_lines = _wrap(name_font, item.name, text_max)
+        body_lines = _wrap(text_font, item.text, text_max)
+        height = ITEM_PAD_Y * 2 + len(name_lines) * 34 + len(body_lines) * 26 + 26
+        heights.append(max(height, 108))
         wrapped.append((name_lines, body_lines))
 
-    total_h = HEADER_H + PADDING + sum(heights) + ITEM_GAP * max(len(items) - 1, 0) + PADDING
+    footer_h = 44
+    total_h = HEADER_H + PADDING + sum(heights) + ITEM_GAP * max(len(items) - 1, 0) + footer_h
     if not items:
         total_h += 80
 
-    paper = (246, 241, 232)
-    header_bg = (28, 37, 48)
-    ink = (36, 32, 28)
-    muted = (122, 114, 106)
-    today = (184, 72, 44)
-    card_bg = (255, 252, 247)
-    card_line = (220, 210, 196)
+    bg = (20, 22, 26)
+    header_bg = (26, 29, 34)
+    card = (34, 38, 46)
+    card_today = (48, 40, 30)
+    stroke = (58, 64, 74)
+    gold = (212, 160, 84)
+    cream = (244, 236, 220)
+    muted = (154, 148, 138)
+    ink = (28, 24, 20)
+    shadow = (10, 11, 13)
 
-    image = Image.new("RGB", (WIDTH, total_h), paper)
+    image = Image.new("RGB", (WIDTH, total_h), bg)
     draw = ImageDraw.Draw(image)
     draw.rectangle((0, 0, WIDTH, HEADER_H), fill=header_bg)
-    draw.text((PADDING, 28), "倒计时", font=title_font, fill=(214, 196, 168))
-    draw.text((PADDING, 58), header or "", font=date_font, fill=(250, 246, 238))
+    draw.rectangle((0, HEADER_H - 3, WIDTH, HEADER_H), fill=gold)
+
+    draw.text((PADDING, 28), "COUNTDOWN · 倒计时", font=title_font, fill=gold)
+    draw.text((PADDING, 58), header or "", font=date_font, fill=cream)
     if weekday:
-        ww = _width(week_font, weekday)
-        draw.text((WIDTH - PADDING - ww, 70), weekday, font=week_font, fill=(184, 176, 164))
+        pill = f"  {weekday}  "
+        pw = _width(week_font, pill) + 16
+        px = WIDTH - PADDING - pw
+        py = 66
+        draw.rounded_rectangle((px, py, px + pw, py + 36), radius=18, outline=gold, width=1)
+        _center_text(draw, (px + pw / 2, py + 18), weekday, week_font, gold)
 
-    y = HEADER_H + PADDING
+    y = HEADER_H + 24
     for item, height, (name_lines, body_lines) in zip(items, heights, wrapped, strict=True):
-        draw.rounded_rectangle(
-            (PADDING, y, WIDTH - PADDING, y + height),
-            radius=16,
-            fill=card_bg,
-            outline=card_line,
-            width=1,
-        )
-        accent = today if item.is_today else header_bg
-        draw.rounded_rectangle((PADDING, y, PADDING + 8, y + height), radius=8, fill=accent)
+        x0, x1 = PADDING, WIDTH - PADDING
+        draw.rounded_rectangle((x0 + 3, y + 5, x1 + 3, y + height + 5), radius=18, fill=shadow)
+        fill = card_today if item.is_today or item.is_due else card
+        draw.rounded_rectangle((x0, y, x1, y + height), radius=18, fill=fill, outline=stroke, width=1)
+        accent = gold if item.is_today or item.is_due else (72, 80, 92)
+        draw.rounded_rectangle((x0, y, x0 + 7, y + height), radius=6, fill=accent)
 
-        if item.is_due or (item.is_today and not item.has_time):
-            badge = "今天"
-        elif item.has_time and item.is_today:
-            badge = item.remain or item.target_time or "今天"
-        elif item.mode == "countdown":
-            badge = f"{max(item.days, 0)}"
-        else:
-            badge = f"+{max(item.days, 0)}"
-        badge_color = today if item.is_today or item.is_due else header_bg
-        draw.text(
-            (PADDING + 28, y + 22),
-            badge,
-            font=days_font if len(badge) <= 3 else badge_font,
-            fill=badge_color,
+        idx = item.index or 0
+        cx, cy = x0 + ITEM_PAD_X + 8 + INDEX_SIZE / 2, y + height / 2
+        draw.ellipse(
+            (cx - INDEX_SIZE / 2, cy - INDEX_SIZE / 2, cx + INDEX_SIZE / 2, cy + INDEX_SIZE / 2),
+            fill=gold if item.is_today or item.is_due else (232, 224, 208),
         )
+        _center_text(draw, (cx, cy), str(idx or "-"), index_font, ink)
 
-        text_x = PADDING + 120
-        ty = y + ITEM_PAD
-        for line in name_lines:
-            draw.text((text_x, ty), line, font=name_font, fill=ink)
+        text_x = x0 + ITEM_PAD_X + INDEX_SIZE + 24
+        ty = y + ITEM_PAD_Y
+        for name_line in name_lines:
+            draw.text((text_x, ty), name_line, font=name_font, fill=cream)
             ty += 34
-        for line in body_lines:
-            draw.text((text_x, ty), line, font=text_font, fill=muted)
-            ty += 28
+        for body_line in body_lines:
+            draw.text((text_x, ty), body_line, font=text_font, fill=muted)
+            ty += 26
+        meta_bits = ["倒计时" if item.mode == "countdown" else "正计时"]
         if item.has_time and item.target_time:
-            label = item.target_time
-            lw = _width(badge_font, label)
-            draw.text((WIDTH - PADDING - ITEM_PAD - lw, y + 18), label, font=badge_font, fill=muted)
+            meta_bits.append(item.target_time)
+        draw.text((text_x, ty + 2), " · ".join(meta_bits), font=meta_font, fill=(120, 116, 108))
+
+        remain, unit = _remain_display(item)
+        rx = x1 - ITEM_PAD_X - REMAIN_W / 2
+        used_remain_font = remain_font if len(remain) <= 6 else text_font
+        _center_text(draw, (rx, y + height / 2 - 8), remain, used_remain_font, gold)
+        if unit:
+            _center_text(draw, (rx, y + height / 2 + 20), unit, remain_unit_font, muted)
         y += height + ITEM_GAP
+
+    count = len(items)
+    draw.text(
+        (PADDING, total_h - 32),
+        f"{count} 项任务  ·  序号与 /倒计时 列表一致",
+        font=meta_font,
+        fill=(110, 106, 98),
+    )
 
     path.parent.mkdir(parents=True, exist_ok=True)
     image.save(path, format="PNG")

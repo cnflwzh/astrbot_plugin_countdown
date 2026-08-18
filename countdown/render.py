@@ -126,6 +126,7 @@ class RenderedItem:
     target_time: str
     remain: str = ""
     is_due: bool = False
+    index: int = 0
 
 
 def resolve_item_template(
@@ -158,9 +159,13 @@ def build_render_items(
     today_template: str,
     countdown_time_template: str = "距离{name}还有{remain}",
     item_prefix: str = "- ",
+    source_tasks: list[Task] | None = None,
 ) -> tuple[str, str, list[RenderedItem]]:
     header_ctx = header_context(now)
     header = render_template(header_template, header_ctx).rstrip()
+    index_map = {
+        task.id: index for index, task in enumerate(source_tasks or tasks, start=1)
+    }
     ordered = sorted(
         tasks,
         key=lambda task: (
@@ -197,6 +202,7 @@ def build_render_items(
                 target_time=task.target_datetime().strftime("%H:%M") if task.has_time else "",
                 remain=str(ctx.get("remain") or ""),
                 is_due=is_due(task, now),
+                index=index_map.get(task.id, 0),
             )
         )
         lines.append(f"{item_prefix}{text}")
