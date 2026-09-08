@@ -1,12 +1,21 @@
 from __future__ import annotations
 
+import inspect
 from collections.abc import Iterable
 from typing import Any
 
+from .session import is_group_message
+
 
 def _as_id_set(values: Iterable[Any]) -> set[str]:
+    if isinstance(values, (str, int)) and not isinstance(values, bool):
+        values = [values]
+    if not isinstance(values, (list, tuple, set, frozenset)):
+        return set()
     result: set[str] = set()
     for item in values or []:
+        if type(item) not in (str, int):
+            continue
         text = str(item).strip()
         if text:
             result.add(text)
@@ -36,7 +45,15 @@ def is_astrbot_admin(event: Any, context: Any | None = None) -> bool:
     if context is None:
         return False
     try:
-        config = context.get_config()
+        getter = context.get_config
+        umo = str(getattr(event, "unified_msg_origin", "") or "")
+        try:
+            inspect.signature(getter).bind(umo)
+        except TypeError:
+            # Older AstrBot versions expose get_config() without a session argument.
+            config = getter()
+        else:
+            config = getter(umo)
         admins = config.get("admins_id", []) if config is not None else []
     except Exception:
         admins = []
@@ -51,12 +68,14 @@ def qq_group_role(event: Any) -> str:
         return str(role)
     raw = getattr(message_obj, "raw_message", None)
     if isinstance(raw, dict):
-        return str((raw.get("sender") or {}).get("role") or "")
+        raw_sender = raw.get("sender")
+        if isinstance(raw_sender, dict):
+            return str(raw_sender.get("role") or "")
     return ""
 
 
 def is_qq_group_admin(event: Any) -> bool:
-    return qq_group_role(event) in {"owner", "admin"}
+    return is_group_message(event) and qq_group_role(event) in {"owner", "admin"}
 
 
 def can_manage(

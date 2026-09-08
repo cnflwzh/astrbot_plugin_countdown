@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime
+from string import Formatter
 
 from .models import Task
 
@@ -9,9 +11,40 @@ WEEKDAYS = ["星期一", "星期二", "星期三", "星期四", "星期五", "�
 WEEKDAYS_SHORT = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
 
 
-class SafeDict(dict):
-    def __missing__(self, key: str) -> str:
-        return "{" + key + "}"
+MAX_TEMPLATE_OUTPUT = 4096
+_FORMATTER = Formatter()
+_FORMAT_NUMBERS = re.compile(r"\d+")
+
+
+def _format_bounded(template: str, ctx: dict[str, object], depth: int = 2) -> str:
+    if depth < 0 or len(template) > MAX_TEMPLATE_OUTPUT:
+        raise ValueError("template is too large or nested too deeply")
+    parts: list[str] = []
+    length = 0
+    for literal, field, spec, conversion in _FORMATTER.parse(template):
+        length += len(literal)
+        parts.append(literal)
+        if field is not None:
+            # Never let a user template traverse attributes or index into values.
+            if not field.isidentifier():
+                raise ValueError("only named placeholders are supported")
+            value = ctx.get(field, "{" + field + "}")
+            if type(value) not in (str, int, float, bool):
+                raise ValueError("unsupported placeholder value")
+            if isinstance(value, str) and len(value) > MAX_TEMPLATE_OUTPUT:
+                raise ValueError("placeholder value is too large")
+            if conversion:
+                value = _FORMATTER.convert_field(value, conversion)
+            spec = _format_bounded(spec, ctx, depth - 1)
+            # Check BEFORE format() can allocate padding or floating point precision.
+            if any(int(number) > MAX_TEMPLATE_OUTPUT for number in _FORMAT_NUMBERS.findall(spec)):
+                raise ValueError("format width or precision is too large")
+            rendered = format(value, spec)
+            length += len(rendered)
+            parts.append(rendered)
+        if length > MAX_TEMPLATE_OUTPUT:
+            raise ValueError("rendered template is too large")
+    return "".join(parts)
 
 
 def header_context(now: datetime) -> dict[str, object]:
@@ -66,7 +99,11 @@ def remain_parts(task: Task, now: datetime) -> tuple[int, int, int, int]:
         else:
             total = task_delta_days(task, now) * 86400
     else:
-        total = int((now - target).total_seconds()) if task.has_time else task_delta_days(task, now) * 86400
+        total = (
+            int((now - target).total_seconds())
+            if task.has_time
+            else task_delta_days(task, now) * 86400
+        )
     raw = total
     total = max(0, total)
     days = total // 86400
@@ -109,10 +146,13 @@ def task_context(
 
 
 def render_template(template: str, ctx: dict[str, object]) -> str:
+    raw = template or ""
+    if len(raw) > MAX_TEMPLATE_OUTPUT:
+        return raw[:MAX_TEMPLATE_OUTPUT]
     try:
-        return (template or "").format_map(SafeDict(ctx))
-    except Exception:
-        return template or ""
+        return _format_bounded(raw, ctx)
+    except (ValueError, TypeError, OverflowError):
+        return raw
 
 
 @dataclass
@@ -163,9 +203,7 @@ def build_render_items(
 ) -> tuple[str, str, list[RenderedItem]]:
     header_ctx = header_context(now)
     header = render_template(header_template, header_ctx).rstrip()
-    index_map = {
-        task.id: index for index, task in enumerate(source_tasks or tasks, start=1)
-    }
+    index_map = {task.id: index for index, task in enumerate(source_tasks or tasks, start=1)}
     ordered = sorted(
         tasks,
         key=lambda task: (

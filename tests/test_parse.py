@@ -6,9 +6,11 @@ from countdown.parse import (
     ParseError,
     extract_after_command,
     parse_add_args,
+    parse_add_fields,
     parse_clock,
     parse_command,
     parse_datetime,
+    parse_edit_args,
     tokenize,
 )
 
@@ -176,3 +178,42 @@ def test_user_command_survives_astrbot_message_shapes(raw: str):
     assert "前瞻" in name
     assert when.value == datetime(2026, 8, 21, 19, 30)
     assert when.has_time is True
+
+
+def test_structured_add_preserves_name_and_template_boundaries():
+    name, when, template = parse_add_fields(
+        "2026-10-01 release 'A'",
+        "2060-01-01 19:30",
+        '"{name}"\n{remain}',
+        date(2026, 8, 18),
+        future_md=True,
+    )
+    assert name == "2026-10-01 release 'A'"
+    assert when.value == datetime(2060, 1, 1, 19, 30)
+    assert template == '"{name}"\n{remain}'
+    with pytest.raises(ParseError):
+        parse_add_fields("name", "2060-01-01 extra", "", date(2026, 8, 18), future_md=True)
+
+
+def test_first_invalid_date_is_not_swallowed_into_name():
+    with pytest.raises(ParseError, match="无效日期"):
+        parse_add_args(["发布", "2026-02-30", "2060-01-01"], date(2026, 1, 1), future_md=True)
+
+
+@pytest.mark.parametrize("name", ["《明日方舟：终末地》前瞻", "release party"])
+def test_edit_accepts_existing_multi_token_names(name):
+    assert parse_edit_args(tokenize(f"{name} 日期 2060-01-01 19:30")) == (
+        name,
+        "date",
+        "2060-01-01 19:30",
+    )
+    assert parse_edit_args([name, "template", '"{name}"\n{remain}']) == (
+        name,
+        "template",
+        '"{name}"\n{remain}',
+    )
+
+
+def test_oversized_command_is_rejected_before_tokenization():
+    with pytest.raises(ParseError, match="过长"):
+        parse_command("/倒计时 添加 " + "x" * 10000)

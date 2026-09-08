@@ -135,3 +135,40 @@ def test_due_remind_at_target_time():
     assert should_due_remind(task, datetime(2060, 1, 1, 18, 5, 0)) is True
     task.due_reminded = True
     assert should_due_remind(task, datetime(2060, 1, 1, 18, 5, 0)) is False
+
+
+def test_failed_due_remind_survives_midnight_cleanup():
+    task = _task("1", "发布", "countdown", "2060-01-01T23:59:00", has_time=True)
+    now = datetime(2060, 1, 2, 9)
+    session = _session(task)
+    assert should_due_remind(task, now)
+    assert expired_countdowns(session, now, cleanup_after_zero=True, include_zero=True) == []
+    task.due_reminded = True
+    assert expired_countdowns(session, now, cleanup_after_zero=True, include_zero=False) == [task]
+
+
+def test_paused_task_is_not_removed_by_another_tasks_broadcast():
+    task = _task("1", "暂停", "countdown", "2060-01-01", enabled=False)
+    assert (
+        expired_countdowns(
+            _session(task), datetime(2060, 1, 1, 9), cleanup_after_zero=True, include_zero=True
+        )
+        == []
+    )
+
+
+def test_zero_catch_up_still_runs_during_scheduled_minute():
+    session = _session(_task("1", "发布", "countdown", "2060-01-31"))
+    for second in (0, 1, 15, 59):
+        assert should_broadcast(
+            session, datetime(2060, 1, 1, 9, 0, second), default_time="09:00", catch_up_minutes=0
+        )
+    assert not should_broadcast(
+        session, datetime(2060, 1, 1, 9, 1), default_time="09:00", catch_up_minutes=0
+    )
+
+
+def test_pre_remind_zero_is_disabled_and_large_window_does_not_overflow():
+    task = _task("1", "发布", "countdown", "2060-01-01T18:00:00", has_time=True)
+    assert not should_pre_remind(task, datetime(2060, 1, 1, 17, 59), minutes=0)
+    assert should_pre_remind(task, datetime(2060, 1, 1, 17, 59), minutes=10**12)

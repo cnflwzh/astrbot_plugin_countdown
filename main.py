@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import sys
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
@@ -21,11 +22,11 @@ from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star, register
 
+from countdown.delivery import finish_broadcast, send_reminders
 from countdown.logic import (
     clock_label,
     expired_countdowns,
     find_task,
-    name_exists,
     should_broadcast,
     should_pre_remind,
     tasks_for_broadcast,
@@ -41,23 +42,27 @@ except ImportError:
         if not getattr(task, "has_time", False) or getattr(task, "due_reminded", False):
             return False
         return now >= task.target_datetime()
+
+
 from countdown.models import Task
+from countdown.operations import create_task, edit_task
 from countdown.parse import (
+    ParsedDate,
     ParseError,
     format_clock,
+    join_name,
     parse_add_args,
-    parse_bool,
+    parse_add_fields,
     parse_clock,
     parse_command,
-    parse_datetime,
     parse_edit_args,
     resolve_timezone,
-    tokenize,
 )
 from countdown.perms import can_manage, can_query
 from countdown.render import (
     build_render_items,
     header_context,
+    is_due,
     preserve_newlines,
     render_template,
     task_context,
@@ -119,7 +124,7 @@ def _data_dir() -> Path:
     "astrbot_plugin_countdown",
     "cnflwzh",
     "按群隔离的倒计时 / 正计时，支持模板占位符和每日定时播报",
-    "1.4.1",
+    "1.4.3",
 )
 class CountdownPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
@@ -129,9 +134,12 @@ class CountdownPlugin(Star):
         self.store.load()
         self._ticker = DailyTicker(self._on_tick)
         self._broadcast_lock = asyncio.Lock()
+        try:
+            self._render_parameters = set(inspect.signature(build_render_items).parameters)
+        except (TypeError, ValueError):
+            self._render_parameters = set(self._templates()) - {"countdown_time_template"}
 
     async def initialize(self):
-        self.store.load()
         self._ticker.start()
         self._sync_skill_for_sandbox()
         logger.info("astrbot_plugin_countdown initialized (llm tools + skill)")
@@ -194,8 +202,11 @@ class CountdownPlugin(Star):
             raise ParseError("当前版本仅支持 aiocqhttp（OneBot v11）。")
         if not is_group_message(event) and not bool(self._cfg("allow_private", True)):
             raise ParseError("当前未开启私聊使用。可在插件配置中打开「允许私聊使用」。")
+        key = session_key(event)
+        if not key:
+            raise ParseError("无法识别当前会话，未读取或修改任务。")
         return self.store.ensure_session(
-            session_key(event),
+            key,
             umo=session_umo(event),
             platform_id=platform_id(event),
             group_id=group_id(event),
@@ -230,12 +241,7 @@ class CountdownPlugin(Star):
         kwargs = self._templates()
         if source_tasks is not None:
             kwargs["source_tasks"] = source_tasks
-        try:
-            accepted = set(inspect.signature(build_render_items).parameters)
-            kwargs = {key: value for key, value in kwargs.items() if key in accepted}
-        except (TypeError, ValueError):
-            kwargs.pop("countdown_time_template", None)
-            kwargs.pop("source_tasks", None)
+        kwargs = {key: value for key, value in kwargs.items() if key in self._render_parameters}
         return build_render_items(tasks, now, **kwargs)
 
     def _render(self, tasks: list[Task], now: datetime) -> str:
@@ -277,11 +283,10 @@ class CountdownPlugin(Star):
         if not bool(self._cfg("send_image", True)):
             return None
         try:
-            from countdown.card import render_card
+            from countdown.card import card_path, render_card
 
             ctx = header_context(now)
-            safe = "".join(ch if ch.isalnum() else "_" for ch in key)[:80] or "session"
-            path = _data_dir() / "cards" / f"{safe}.png"
+            path = card_path(_data_dir() / "cards", key)
             return render_card(
                 path,
                 header=str(ctx.get("today") or ""),
@@ -375,8 +380,11 @@ class CountdownPlugin(Star):
                 kind = "countup"
             else:
                 kind = "countdown"
-            tokens = tokenize(" ".join(part for part in (name, date, template) if part).strip())
-            text = await self._add_task_text(event, tokens, mode=kind)
+            now = self._now()
+            fields = parse_add_fields(
+                name, date, template, now.date(), future_md=kind == "countdown"
+            )
+            text = self._create_task_text(event, *fields, mode=kind, now=now)
             await self._send_user(event, self._reply(event, text))
             return text
         except ParseError as exc:
@@ -421,11 +429,7 @@ class CountdownPlugin(Star):
                 return "没有权限查询倒计时。"
             session = self._require_session(event)
             now = self._now()
-            tasks = [
-                task
-                for task in session.enabled_tasks()
-                if not (task.mode == "countdown" and task_delta_days(task, now) < 0)
-            ]
+            tasks = tasks_for_broadcast(session, now)
             if not tasks:
                 return "本群当前没有可播报的任务。"
             _header, text, items = self._payload(tasks, now, source_tasks=session.tasks)
@@ -486,8 +490,7 @@ class CountdownPlugin(Star):
                 plugin_admin_ids=self._cfg("plugin_admin_ids", []) or [],
             ):
                 return "没有权限修改任务。"
-            tokens = tokenize(f"{target} {field} {value}".strip())
-            text = self._edit_task_text(event, tokens)
+            text = self._edit_task_text(event, [target, field, value])
             await self._send_user(event, self._reply(event, text))
             return text
         except ParseError as exc:
@@ -504,53 +507,51 @@ class CountdownPlugin(Star):
             yield result
 
     async def _add_task(self, event: AstrMessageEvent, tokens: list[str], *, mode: str):
-        yield self._reply(event, await self._add_task_text(event, tokens, mode=mode))
+        yield self._reply(event, self._add_task_text(event, tokens, mode=mode))
 
-    async def _add_task_text(self, event: AstrMessageEvent, tokens: list[str], *, mode: str) -> str:
-        session = self._require_session(event)
+    def _add_task_text(self, event: AstrMessageEvent, tokens: list[str], *, mode: str) -> str:
         now = self._now()
-        name, parsed_date, template = parse_add_args(
+        fields = parse_add_args(
             tokens,
             now.date(),
             future_md=(mode == "countdown"),
         )
-        if len(name) > 50:
-            raise ParseError("名称过长，最多 50 个字符。")
-        if len(template) > 200:
-            raise ParseError("模板过长，最多 200 个字符。")
-        days = (parsed_date.value.date() - now.date()).days
-        if mode == "countdown":
-            if parsed_date.has_time and parsed_date.value <= now:
-                raise ParseError("倒计时的目标时间不能早于现在。")
-            if not parsed_date.has_time and days < 0:
-                raise ParseError("倒计时的目标日期不能早于今天。")
-        if mode == "countup" and days > 0:
-            raise ParseError("正计时的起始日期不能晚于今天。")
-        if name_exists(session, name):
-            raise ParseError(f"本群已存在同名任务「{name}」。")
-        limit = int(self._cfg("max_tasks_per_group", 30) or 30)
-        if len(session.tasks) >= limit:
-            raise ParseError(f"本群任务数已达上限（{limit}）。")
-        task = Task(
-            id=self.store.next_id(session),
+        return self._create_task_text(event, *fields, mode=mode, now=now)
+
+    def _create_task_text(
+        self,
+        event: AstrMessageEvent,
+        name: str,
+        parsed_date: ParsedDate,
+        template: str,
+        *,
+        mode: str,
+        now: datetime,
+    ) -> str:
+        session = self._require_session(event)
+        task = create_task(
+            self.store,
+            session,
             name=name,
             mode=mode,  # type: ignore[arg-type]
-            target=parsed_date.iso,
+            parsed_date=parsed_date,
             template=template,
             created_by=sender_id(event),
-            created_at=now.isoformat(timespec="seconds"),
-            has_time=parsed_date.has_time,
+            now=now,
+            limit=int(self._cfg("max_tasks_per_group", 30) or 30),
         )
-        self.store.add_task(session, task)
         preview = self._render([task], now)
         kind = "倒计时" if mode == "countdown" else "正计时"
         extra = ""
         if mode == "countdown" and parsed_date.has_time:
-            minutes = int(self._cfg("pre_remind_minutes", 10) or 10)
-            extra = (
-                f"\n将在 {parsed_date.value.strftime('%H:%M')} 前 {minutes} 分钟提醒一次，"
-                "到点再提醒一次。"
-            )
+            minutes = int(self._cfg("pre_remind_minutes", 10))
+            if minutes > 0:
+                extra = (
+                    f"\n将在 {parsed_date.value.strftime('%H:%M')} 前 {minutes} 分钟提醒一次，"
+                    "到点再提醒一次。"
+                )
+            else:
+                extra = f"\n将在 {parsed_date.value.strftime('%H:%M')} 到点提醒一次。"
         return f"已添加{kind}任务：\n{preview}{extra}"
 
     async def _cmd_list(self, event: AstrMessageEvent, _tokens: list[str]):
@@ -563,7 +564,7 @@ class CountdownPlugin(Star):
         if not tokens:
             raise ParseError("用法：/倒计时 删除 <序号或名称>")
         session = self._require_session(event)
-        task = find_task(session, " ".join(tokens))
+        task = find_task(session, join_name(tokens))
         if task is None:
             raise ParseError("没有找到对应任务，先用 /倒计时 列表 查看序号。")
         self.store.remove_task(session, task)
@@ -576,62 +577,15 @@ class CountdownPlugin(Star):
     def _edit_task_text(self, event: AstrMessageEvent, tokens: list[str]) -> str:
         target, field, value = parse_edit_args(tokens)
         session = self._require_session(event)
-        task = find_task(session, target)
-        if task is None:
-            raise ParseError("没有找到对应任务，先用 /倒计时 列表 查看序号。")
         now = self._now()
-
-        def apply():
-            if field == "name":
-                name = value.strip()
-                if not name:
-                    raise ParseError("名称不能为空。")
-                if len(name) > 50:
-                    raise ParseError("名称过长，最多 50 个字符。")
-                if name_exists(session, name, exclude_id=task.id):
-                    raise ParseError(f"本群已存在同名任务「{name}」。")
-                task.name = name
-                return
-            if field == "template":
-                if len(value) > 200:
-                    raise ParseError("模板过长，最多 200 个字符。")
-                task.template = value
-                return
-            if field == "enabled":
-                task.enabled = parse_bool(value)
-                return
-            parsed_date, extra = parse_datetime(
-                value.split(),
-                now.date(),
-                future_md=(task.mode == "countdown"),
-            )
-            if extra:
-                raise ParseError("日期格式不正确。")
-            days = (parsed_date.value.date() - now.date()).days
-            if task.mode == "countdown":
-                if parsed_date.has_time and parsed_date.value <= now:
-                    raise ParseError("倒计时的目标时间不能早于现在。")
-                if not parsed_date.has_time and days < 0:
-                    raise ParseError("倒计时的目标日期不能早于今天。")
-            if task.mode == "countup" and days > 0:
-                raise ParseError("正计时的起始日期不能晚于今天。")
-            task.target = parsed_date.iso
-            task.has_time = parsed_date.has_time
-            task.pre_reminded = False
-            task.due_reminded = False
-
-        self.store.mutate(apply)
+        task = edit_task(self.store, session, target=target, field=field, value=value, now=now)
         return f"已更新任务「{task.name}」。\n{self._render([task], now)}"
 
     async def _cmd_query(self, event: AstrMessageEvent, _tokens: list[str]):
         self._assert_query(event)
         session = self._require_session(event)
         now = self._now()
-        tasks = [
-            task
-            for task in session.enabled_tasks()
-            if not (task.mode == "countdown" and task_delta_days(task, now) < 0)
-        ]
+        tasks = tasks_for_broadcast(session, now)
         if not tasks:
             yield self._reply(event, "本群当前没有可播报的任务。")
             return
@@ -643,6 +597,10 @@ class CountdownPlugin(Star):
         yield self._reply(event, text)
 
     async def _cmd_time(self, event: AstrMessageEvent, tokens: list[str]):
+        if tokens:
+            self._assert_manage(event)
+        else:
+            self._assert_query(event)
         session = self._require_session(event)
         default_time = str(self._cfg("broadcast_time", "09:00") or "09:00")
         if not tokens:
@@ -653,7 +611,6 @@ class CountdownPlugin(Star):
                 "管理员可用 /倒计时 时间 21:30 修改，或发送 /倒计时 时间 默认 恢复。",
             )
             return
-        self._assert_manage(event)
         raw = tokens[0]
         if raw in {"默认", "default", "reset"}:
 
@@ -677,12 +634,13 @@ class CountdownPlugin(Star):
         if not tokens:
             raise ParseError("用法：/倒计时 开关 <序号或名称>")
         session = self._require_session(event)
-        task = find_task(session, " ".join(tokens))
+        task = find_task(session, join_name(tokens))
         if task is None:
             raise ParseError("没有找到对应任务。")
 
         def apply():
             task.enabled = not task.enabled
+            task.revision += 1
 
         self.store.mutate(apply)
         state = "启用" if task.enabled else "停用"
@@ -716,23 +674,28 @@ class CountdownPlugin(Star):
             cleanup = bool(self._cfg("cleanup_after_zero", True))
             async with self._broadcast_lock:
                 for session in self.store.iter_sessions():
-                    await self._send_pre_reminds(session, now)
-                    await self._send_due_reminds(session, now)
+                    try:
+                        await self._send_pre_reminds(session, now)
+                        await self._send_due_reminds(session, now)
+                    except Exception:
+                        logger.exception("countdown reminders failed for %s", session.key)
                 self._cleanup_overdue(now, cleanup)
                 for session in self.store.iter_sessions():
-                    if not should_broadcast(
-                        session,
-                        now,
-                        default_time=default_time,
-                        catch_up_minutes=catch_up,
-                    ):
-                        continue
-                    await self._broadcast_session(session, now, cleanup=cleanup)
+                    try:
+                        if should_broadcast(
+                            session,
+                            now,
+                            default_time=default_time,
+                            catch_up_minutes=catch_up,
+                        ):
+                            await self._broadcast_session(session, now, cleanup=cleanup)
+                    except Exception:
+                        logger.exception("countdown broadcast failed for %s", session.key)
         except Exception:
             logger.exception("countdown tick failed")
 
     def _cleanup_overdue(self, now: datetime, cleanup: bool) -> None:
-        changed = False
+        pending = []
         for session in self.store.iter_sessions():
             overdue = expired_countdowns(
                 session, now, cleanup_after_zero=cleanup, include_zero=False
@@ -740,81 +703,65 @@ class CountdownPlugin(Star):
             if not overdue:
                 continue
             ids = {task.id for task in overdue}
-            session.tasks = [task for task in session.tasks if task.id not in ids]
-            changed = True
-            logger.info("cleaned %s overdue countdown(s) in %s", len(overdue), session.key)
-        if changed:
-            self.store.save()
+            pending.append((session, ids))
+
+        def apply():
+            for session, ids in pending:
+                session.tasks = [task for task in session.tasks if task.id not in ids]
+
+        if pending:
+            self.store.mutate(apply)
+
+    async def _send_scheduled(self, umo: str, chain: MessageChain):
+        return await asyncio.wait_for(self.context.send_message(umo, chain), timeout=30)
 
     async def _send_pre_reminds(self, session, now: datetime) -> None:
-        minutes = int(self._cfg("pre_remind_minutes", 10) or 10)
+        minutes = int(self._cfg("pre_remind_minutes", 10))
         template = str(self._cfg("pre_remind_template", "{name}还有{minutes}分钟！") or "")
-        pending = [task for task in session.tasks if should_pre_remind(task, now, minutes=minutes)]
-        if not pending:
-            return
-        sent_ids: list[str] = []
-        for task in pending:
+
+        async def send(task):
             ctx = task_context(task, now)
             ctx["minutes"] = minutes
             text = render_template(template, ctx)
-            try:
-                result = await self.context.send_message(session.umo, self._build_chain(text))
-            except Exception:
-                logger.exception("failed to send pre-remind for %s", task.name)
-                continue
-            if result is False:
-                logger.warning("pre-remind send_message returned False for %s", session.umo)
-                continue
-            sent_ids.append(task.id)
-        if not sent_ids:
-            return
+            return await self._send_scheduled(session.umo, self._build_chain(text))
 
-        def mark():
-            for task in session.tasks:
-                if task.id in sent_ids:
-                    task.pre_reminded = True
-
-        self.store.mutate(mark)
+        await send_reminders(
+            self.store,
+            session,
+            flag="pre_reminded",
+            is_pending=lambda task: should_pre_remind(task, now, minutes=minutes),
+            send=send,
+        )
 
     async def _send_due_reminds(self, session, now: datetime) -> None:
         template = str(self._cfg("due_remind_template", "{name}到时间了！") or "")
-        pending = [task for task in session.tasks if should_due_remind(task, now)]
-        if not pending:
-            return
-        sent_ids: list[str] = []
-        for task in pending:
+
+        async def send(task):
             ctx = task_context(task, now)
             text = render_template(template, ctx)
-            try:
-                result = await self.context.send_message(session.umo, self._build_chain(text))
-            except Exception:
-                logger.exception("failed to send due remind for %s", task.name)
-                continue
-            if result is False:
-                logger.warning("due-remind send_message returned False for %s", session.umo)
-                continue
-            sent_ids.append(task.id)
-        if not sent_ids:
-            return
+            return await self._send_scheduled(session.umo, self._build_chain(text))
 
-        def mark():
-            for task in session.tasks:
-                if task.id in sent_ids:
-                    task.due_reminded = True
-
-        self.store.mutate(mark)
+        await send_reminders(
+            self.store,
+            session,
+            flag="due_reminded",
+            is_pending=lambda task: should_due_remind(task, now),
+            send=send,
+        )
 
     async def _broadcast_session(self, session, now: datetime, *, cleanup: bool) -> None:
-        tasks = tasks_for_broadcast(session, now)
+        tasks = [replace(task) for task in tasks_for_broadcast(session, now)]
         if not tasks:
             return
         _header, text, items = self._payload(tasks, now, source_tasks=session.tasks)
         image = self._render_card(session.key, now, items)
-        at_all = bool(self._cfg("at_all_on_zero", False)) and any(
-            task.mode == "countdown" and task_delta_days(task, now) <= 0 for task in tasks
+        at_all = (
+            session.is_group
+            and bool(self._cfg("at_all_on_zero", False))
+            and any(is_due(task, now) for task in tasks)
         )
         try:
-            result = await self.context.send_message(
+            result = await self._send_scheduled(
                 session.umo, self._build_chain(text, at_all=at_all, image=image)
             )
         except Exception:
@@ -823,19 +770,4 @@ class CountdownPlugin(Star):
         if result is False:
             logger.warning("send_message returned False for %s", session.umo)
             return
-        today = now.date().isoformat()
-
-        def apply():
-            session.last_broadcast_date = today
-            if cleanup:
-                finished = expired_countdowns(
-                    session, now, cleanup_after_zero=True, include_zero=True
-                )
-                if finished:
-                    ids = {task.id for task in finished}
-                    session.tasks = [task for task in session.tasks if task.id not in ids]
-                    logger.info(
-                        "removed %s finished countdown(s) in %s", len(finished), session.key
-                    )
-
-        self.store.mutate(apply)
+        finish_broadcast(self.store, session, tasks, now, cleanup=cleanup)

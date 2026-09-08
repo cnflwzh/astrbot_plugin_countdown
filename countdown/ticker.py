@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
 TickFn = Callable[[datetime], Awaitable[Any]]
+logger = logging.getLogger(__name__)
 
 
 class DailyTicker:
@@ -39,7 +41,7 @@ class DailyTicker:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                continue
+                logger.exception("countdown ticker callback failed")
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=self._interval)
             except asyncio.TimeoutError:

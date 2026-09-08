@@ -44,7 +44,7 @@
   "pre_remind_minutes": {
     "description": "带具体时刻的任务提前提醒（分钟）",
     "type": "int",
-    "hint": "仅对填写了时刻的倒计时生效，到点前单独发一条文字提醒",
+    "hint": "仅对填写了时刻的倒计时生效，到点前单独发一条文字提醒；设为 0 可关闭提前提醒，保留到点提醒",
     "default": 10
   },
   "pre_remind_template": {
@@ -93,7 +93,7 @@
   "allow_query_all": {
     "description": "允许所有人查询 / 列出任务",
     "type": "bool",
-    "hint": "关闭后，列表和手动查询也需要管理员权限",
+    "hint": "关闭后，列表、手动查询和播报时间查询也需要管理员权限",
     "default": true
   },
   "allow_private": {
@@ -111,7 +111,7 @@
   "catch_up_minutes": {
     "description": "错过播报后的补发窗口（分钟）",
     "type": "int",
-    "hint": "机器人在播报时间之后不久才启动时，仍会补发当天的播报",
+    "hint": "机器人在播报时间之后不久才启动时，仍会补发当天的播报；设为 0 时只在设定的播报分钟内发送",
     "default": 10
   },
   "max_tasks_per_group": {

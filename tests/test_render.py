@@ -1,5 +1,7 @@
 from datetime import datetime
 
+import pytest
+
 from countdown.models import Task
 from countdown.render import (
     build_render_items,
@@ -59,6 +61,33 @@ def test_today_template_overrides_custom_item():
 
 def test_unknown_placeholder_kept():
     assert render_template("hello {missing}", {"name": "x"}) == "hello {missing}"
+
+
+@pytest.mark.parametrize("template", ["{name:1000000}", "{days:.1000000f}"])
+def test_template_rejects_excessive_width_and_precision(template):
+    assert render_template(template, {"name": "x", "days": 1}) == template
+
+
+def test_template_rejects_nested_excessive_width():
+    template = "{name:>{days}}"
+    assert render_template(template, {"name": "x", "days": 1000000}) == template
+
+
+@pytest.mark.parametrize("template", ["{name.__class__}", "{name[0]}"])
+def test_template_cannot_traverse_context_values(template):
+    assert render_template(template, {"name": "secret"}) == template
+
+
+def test_template_keeps_normal_formatting_and_escaped_braces():
+    assert render_template("{{{days:03d}}} {name!r:>5}", {"days": 2, "name": "x"}) == (
+        "{002}   'x'"
+    )
+    assert render_template("{days:0{width}d}", {"days": 2, "width": 3}) == "002"
+
+
+def test_template_bounds_total_expansion():
+    template = "{name}" * 100
+    assert render_template(template, {"name": "x" * 100}) == template
 
 
 def test_countup_days():

@@ -19,7 +19,7 @@ def platform_id(event: Any) -> str:
 
 
 def platform_name(event: Any) -> str:
-    return _call(event, "get_platform_name") or "aiocqhttp"
+    return _call(event, "get_platform_name")
 
 
 def group_id(event: Any) -> str:

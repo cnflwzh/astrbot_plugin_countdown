@@ -21,14 +21,14 @@ def should_broadcast(
 ) -> bool:
     if not session.broadcast_enabled:
         return False
-    if not session.enabled_tasks():
+    if not any(task.enabled for task in session.tasks):
         return False
     today = now.date().isoformat()
     if session.last_broadcast_date == today:
         return False
     hour, minute = resolve_broadcast_clock(session, default_time)
     scheduled = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    delta_minutes = (now - scheduled).total_seconds() / 60.0
+    delta_minutes = (now - scheduled).total_seconds() // 60
     window = max(0, int(catch_up_minutes))
     return 0 <= delta_minutes <= window
 
@@ -44,17 +44,15 @@ def tasks_for_broadcast(session: SessionState, now: datetime) -> list[Task]:
 
 
 def due_for_cleanup(task: Task, now: datetime, *, include_date_only_zero: bool) -> bool:
-    if task.mode != "countdown":
+    if task.mode != "countdown" or not task.enabled:
         return False
+    if task.has_time:
+        return task.due_reminded and now >= task.target_datetime()
     days = task_delta_days(task, now)
     if days < 0:
         return True
     if days > 0:
         return False
-    if task.has_time:
-        if now < task.target_datetime():
-            return False
-        return task.due_reminded
     return include_date_only_zero
 
 
@@ -69,7 +67,7 @@ def expired_countdowns(
         return []
     return [
         task
-        for task in list(session.tasks)
+        for task in session.tasks
         if due_for_cleanup(task, now, include_date_only_zero=include_zero)
     ]
 
@@ -79,9 +77,8 @@ def should_pre_remind(task: Task, now: datetime, *, minutes: int) -> bool:
         return False
     if task.pre_reminded or minutes <= 0:
         return False
-    target = task.target_datetime()
-    remind_at = target - timedelta(minutes=minutes)
-    return remind_at <= now < target
+    seconds = (task.target_datetime() - now).total_seconds()
+    return 0 < seconds <= minutes * 60
 
 
 def should_due_remind(task: Task, now: datetime) -> bool:

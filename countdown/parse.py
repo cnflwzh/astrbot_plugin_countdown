@@ -133,6 +133,8 @@ def tokenize(text: str) -> list[str]:
 
 
 def parse_command(message_str: str) -> ParsedCommand:
+    if len(message_str or "") > 4096:
+        raise ParseError("指令过长，请缩短名称或模板。")
     rest = extract_after_command(message_str)
     tokens = tokenize(rest)
     if not tokens:
@@ -179,7 +181,9 @@ def _resolve_md_year(parsed: date, today: date, *, future_md: bool, has_year: bo
     return parsed
 
 
-def _parse_date_token(token: str, today: date, *, future_md: bool) -> tuple[date, tuple[int, int, int] | None] | None:
+def _parse_date_token(
+    token: str, today: date, *, future_md: bool
+) -> tuple[date, tuple[int, int, int] | None] | None:
     for pattern in _DATE_PATTERNS:
         match = pattern.fullmatch(token)
         if not match:
@@ -266,7 +270,7 @@ def find_datetime_index(tokens: list[str], today: date, *, future_md: bool) -> i
             if _parse_date_token(token, today, future_md=future_md) is not None:
                 return index
         except ParseError:
-            continue
+            return index
     return -1
 
 
@@ -288,11 +292,25 @@ def parse_add_args(
     return name, parsed, template
 
 
+def parse_add_fields(
+    name: str, when: str, template: str, today: date, *, future_md: bool
+) -> tuple[str, ParsedDate, str]:
+    """Parse tool parameters without interpreting parts of the name as a date."""
+    if not all(isinstance(value, str) for value in (name, when, template)):
+        raise ParseError("名称、日期和模板必须是文本。")
+    if len(when) > 64:
+        raise ParseError("日期格式不正确。")
+    parsed, extra = parse_datetime(when.split(), today, future_md=future_md)
+    if extra:
+        raise ParseError("日期格式不正确。")
+    return name.strip(), parsed, template.strip()
+
+
 def parse_edit_args(tokens: list[str]) -> tuple[str, str, str]:
+    if not all(isinstance(token, str) for token in tokens):
+        raise ParseError("任务名称、字段和新值必须是文本。")
     if len(tokens) < 3:
         raise ParseError("用法：/倒计时 改 <序号或名称> 名称|日期|模板|开关 <值>")
-    target = tokens[0]
-    field = tokens[1]
     mapping = {
         "名称": "name",
         "名字": "name",
@@ -306,10 +324,12 @@ def parse_edit_args(tokens: list[str]) -> tuple[str, str, str]:
         "开关": "enabled",
         "enabled": "enabled",
     }
-    key = mapping.get(field, mapping.get(field.lower(), ""))
-    if not key:
+    index = next((i for i in range(1, len(tokens) - 1) if tokens[i].lower() in mapping), -1)
+    if index < 0:
         raise ParseError("可修改字段：名称、日期、模板、开关。")
-    value = " ".join(tokens[2:]).strip()
+    target = join_name(tokens[:index])
+    key = mapping[tokens[index].lower()]
+    value = " ".join(tokens[index + 1 :]).strip()
     if not value:
         raise ParseError("缺少要修改的值。")
     return target, key, value

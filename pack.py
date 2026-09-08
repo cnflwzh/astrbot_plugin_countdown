@@ -28,6 +28,7 @@ SKIP_FILE_NAMES = {
     "pack.py",
     "pytest.ini",
     "ruff.toml",
+    "AGENTS.md",
 }
 SKIP_GLOBS = (
     "*.pyc",
