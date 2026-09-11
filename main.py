@@ -124,7 +124,7 @@ def _data_dir() -> Path:
     "astrbot_plugin_countdown",
     "cnflwzh",
     "事件倒计时与正计时记录，支持图片卡片、每日汇总、到点提醒和自然语言管理",
-    "1.4.4",
+    "1.4.5",
 )
 class CountdownPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):

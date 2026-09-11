@@ -7,7 +7,7 @@ desc: >-
   各会话的任务独立保存，各群可单独设置汇总时间，支持管理权限配置和到期自动清理。
   可通过指令或 LLM 自然语言添加、查询、修改、停用及删除任务，操作遵循插件权限配置。
   当前仅支持 aiocqhttp（OneBot v11）。
-version: v1.4.4
+version: v1.4.5
 author: cnflwzh
 repo: https://github.com/cnflwzh/astrbot_plugin_countdown
 tags:
