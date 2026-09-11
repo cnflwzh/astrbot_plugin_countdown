@@ -123,8 +123,8 @@ def _data_dir() -> Path:
 @register(
     "astrbot_plugin_countdown",
     "cnflwzh",
-    "按群隔离的倒计时 / 正计时，支持模板占位符和每日定时播报",
-    "1.4.3",
+    "事件倒计时与正计时记录，支持图片卡片、每日汇总、到点提醒和自然语言管理",
+    "1.4.4",
 )
 class CountdownPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
