@@ -1,8 +1,8 @@
 name: astrbot_plugin_countdown
-display_name: 倒计时
+display_name: 倒数日
 short_desc: 按群隔离的倒计时 / 正计时，支持模板占位符和每日定时播报
 desc: 为每个群维护独立的倒计时与正计时任务。支持自定义句式模板、每日定时播报、到期自动清理，以及基于仪表盘管理员的权限控制。当前版本仅兼容 aiocqhttp。
-version: v1.4.3
+version: v1.4.4
 author: cnflwzh
 repo: https://github.com/cnflwzh/astrbot_plugin_countdown
 support_platforms:
