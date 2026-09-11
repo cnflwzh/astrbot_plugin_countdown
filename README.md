@@ -1,4 +1,20 @@
+<p align="center">
+  <img src="logo.png" alt="事件提醒与时间记录图标" width="160" height="160" />
+</p>
+
 # 事件提醒与时间记录
+
+<p>
+  <img src="https://komarev.com/ghpvc/?username=cnflwzh.astrbot_plugin_countdown&amp;label=README+views&amp;color=285943&amp;style=flat" alt="README 访问次数" />
+  <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&amp;logoColor=white" alt="Python 3.10+" />
+  <img src="https://img.shields.io/badge/AstrBot-4.0.0%2B-285943" alt="AstrBot 4.0.0+" />
+  <img src="https://img.shields.io/badge/Pillow-10.0.0%2B-3776AB?logo=python&amp;logoColor=white" alt="Pillow 10.0.0+" />
+  <img src="https://img.shields.io/badge/Config-YAML%20%2F%20JSON-CB171E?logo=yaml&amp;logoColor=white" alt="配置格式：YAML / JSON" />
+  <img src="https://img.shields.io/badge/OneBot-v11-4C9F70" alt="OneBot v11" />
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-blue" alt="AGPL-3.0" /></a>
+</p>
+
+<!-- README views counts badge loads, not unique visitors; GitHub image caching may affect updates. -->
 
 一个面向 AstrBot 群聊的事件管理插件：记下未来要发生的事，在临近和到点时提醒；也可以记录过去的重要日期，持续展示已经过去的时间。
 
